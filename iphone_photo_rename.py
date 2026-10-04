@@ -2,10 +2,11 @@ import sys, os
 import time
 from tkinter import messagebox
 from tkinter import filedialog
-# from exif import Image    ## 사진, 동영상 찍은 날짜는 모두 '수정한 날짜'와 거의 동일하기에, 여기선 EXIF를 굳이 안쓴다.
+from PIL import Image
+from PIL.ExifTags import TAGS
 
 ## 변환하고자하는 원본파일의 확장자명을 여기에 사전 기입해야한다. (대소문자 구분한다)
-applicable_file_type = ['.JPG', '.PNG', '.HEIC', '.MOV']
+applicable_file_type = ['.JPG', '.PNG', '.HEIC', '.MOV', '.jpg', '.mp4', '.png']
 
 ## 이름 변환 실패한 파일 리스트
 failed_files = []
@@ -30,10 +31,29 @@ def get_image_path(root_dir):
                 file_path = os.path.join(root, file_name)
                 result_list.append(file_path)
 
-    print('-- Total files num : ', len(result_list))
+    print('-- Total files num :', len(result_list))
 
     return result_list
 
+## 실제 EXIF "찍은 날짜" 정보를 읽는 함수
+def get_photo_taken_date(f):
+    try:
+        image = Image.open(f)
+        exif_data = image._getexif()
+
+        if exif_data:
+            for tag_id, value in exif_data.items():
+                tag_name = TAGS.get(tag_id, tag_id)
+                if tag_name == "DateTimeOriginal":
+                    print(f'{f} -> EXIF_Taken_time : {value}')
+                    struct_time_temp = time.strptime(value, "%Y:%m:%d %H:%M:%S")
+                    result = time.strftime("%Y%m%d_%H%M%S", struct_time_temp)
+                    return result
+    except:
+        print(f'\n**[Error] Cannot get EXIF_taken_time of {f}.')
+        return False
+
+## EXIF 정보 얻을 수 없을 때, 대신 "수정한 날짜" 정보를 읽는 함수
 def get_modified_date(f):
     try:
         timestamp = os.path.getmtime(f)
@@ -42,38 +62,55 @@ def get_modified_date(f):
         struct_time_temp = time.strptime(modified_time, "%a %b %d %H:%M:%S %Y")
         ## 아래 "%Y%m~~" 이 부분은 사용자정의 가능하다. 이 형식으로 파일이름이 rename된다.
         result = time.strftime("%Y%m%d_%H%M%S", struct_time_temp)
-        # print(result)
+        # print(f'{f} -> Modified_time : {result}')
         return result
     except:
         return None
 
 def file_rename(f, f_type, root_dir):
-    f_modified_time = get_modified_date(f)
-    # print(f'{f} modified_time : {f_modified_time}')
+    f_exif = get_photo_taken_date(f)
 
-    if f_modified_time:
+    if f_exif:
+        print(f"-- Success to receive EXIF_taken_time from {f}")
         ## 경험상 연달아 찍은 사진은 찍은날짜(수정한 날짜)가 시/분/초가 동일하게 나와서, 파일이름중복에러로 except걸린다. 따라서 이 경우엔 초단위에 1sec를 추가하여 rename시킨다.
-        for i in range(5):  ## 바로 위 내용을 5번 try하는 것
+        for i in range(100):
             try:
-                new_f_name = root_dir + '\\' + f_modified_time + f_type
-                # print(new_f_name)
+                new_f_name = root_dir + '\\' + f_exif + f_type
                 os.rename(f, new_f_name)
+                print(f'{f} -> {new_f_name} Converted.')
                 break
 
             except:
                 print('-- Duplicate file name found(related to continuous shooting)')
-                print(f'Previous new file name [{i+1}] : {f_modified_time + f_type}')
-                temp = int(f_modified_time[-1:])
+                print(f'Previous new file name [{i + 1}] : {f_exif + f_type}')
+                temp = int(f_exif[-1:])
                 temp += 1
-                f_modified_time = f_modified_time[:-1] + str(temp)
-                print(f'Converted new file name [{i+1}] : {f_modified_time + f_type}')
-        else:
-            failed_files.append(f)
-            print(f'** Cannot get modified_time of {f}.')
+                f_exif = f_exif[:-1] + str(temp)
+                print(f'Converted new file name [{i + 1}] : {f_exif + f_type}')
 
     else:
-        failed_files.append(f)
-        print(f'** Cannot get modified_time of {f}.')
+        print(f'Try to get modified_date instead..')
+        f_modified_time = get_modified_date(f)
+
+        if f_modified_time:
+            for i in range(100):
+                try:
+                    new_f_name = root_dir + '\\' + f_modified_time + f_type
+                    os.rename(f, new_f_name)
+                    print(f'{f} -> {new_f_name} Converted.')
+                    break
+
+                except:
+                    print('-- Duplicate file name found(related to continuous shooting)')
+                    print(f'Previous new file name [{i+1}] : {f_modified_time + f_type}')
+                    temp = int(f_modified_time[-1:])
+                    temp += 1
+                    f_modified_time = f_modified_time[:-1] + str(temp)
+                    print(f'Converted new file name [{i+1}] : {f_modified_time + f_type}')
+
+        else:
+            failed_files.append(f)
+            print(f'\n**[Error] Cannot get modified_time of {f}.')
 
 
 def main():
